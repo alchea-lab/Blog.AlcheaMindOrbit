@@ -10,6 +10,9 @@ jobs:
     timeout-minutes: 15
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Install FFmpeg and dependencies
         run: |
           sudo apt-get update -qq
@@ -28,6 +31,7 @@ jobs:
         env:
           IMG1: ${{ github.event.client_payload.image_url1 }}
           IMG2: ${{ github.event.client_payload.image_url2 }}
+          SECOND_VIDEO_URL: ${{ github.event.client_payload.second_video_url }}
         run: |
           if [ -z "$IMG1" ]; then
             echo "ERROR: image_url1 is missing"
@@ -37,12 +41,19 @@ jobs:
           echo "Downloading IMG1..."
           curl -fL --retry 3 --retry-delay 2 --max-time 60 "$IMG1" -o img1.jpg
 
-          if [ -n "$IMG2" ]; then
+          if [ -n "$SECOND_VIDEO_URL" ]; then
+            echo "Downloading SECOND_VIDEO_URL..."
+            curl -fL --retry 3 --retry-delay 2 --max-time 60 "$SECOND_VIDEO_URL" -o scene2.mp4
+            echo "SECOND_VIDEO=true" >> $GITHUB_ENV
+            echo "TWO_IMAGES=false" >> $GITHUB_ENV
+          elif [ -n "$IMG2" ]; then
             echo "Downloading IMG2..."
             curl -fL --retry 3 --retry-delay 2 --max-time 60 "$IMG2" -o img2.jpg
             echo "TWO_IMAGES=true" >> $GITHUB_ENV
+            echo "SECOND_VIDEO=false" >> $GITHUB_ENV
           else
             echo "TWO_IMAGES=false" >> $GITHUB_ENV
+            echo "SECOND_VIDEO=false" >> $GITHUB_ENV
           fi
 
       - name: Download BGM
@@ -127,15 +138,36 @@ jobs:
             fi
           }
 
-          ffmpeg -y -loop 1 -framerate 30 -t 8 -i img1.jpg \
-            -vf "scale=2160:3840:force_original_aspect_ratio=increase,crop=2160:3840,zoompan=z='min(1+0.0007*on,1.15)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=30,setsar=1,format=yuv420p" \
-            -r 30 -c:v libx264 -preset fast -crf 22 -pix_fmt yuv420p \
+          GLITTER="assets/overlays/glitter/GlitterShorts.mov"
+          if [ ! -f "$GLITTER" ]; then
+            echo "ERROR: $GLITTER not found"
+            exit 1
+          fi
+
+          ffmpeg -y \
+            -loop 1 -framerate 30 -t 8 -i img1.jpg \
+            -stream_loop -1 -i "$GLITTER" \
+            -filter_complex "[0:v]scale=2160:3840:force_original_aspect_ratio=increase,crop=2160:3840,zoompan=z='min(1+0.0007*on,1.15)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=30,setsar=1,format=yuv420p[bg];[1:v]format=yuva444p10le,trim=duration=8,setpts=PTS-STARTPTS,scale=1080:1920[gl];[bg][gl]overlay=0:0:format=auto:shortest=1,format=yuv420p[v]" \
+            -map "[v]" \
+            -r 30 -c:v libx264 -preset fast -crf 22 -pix_fmt yuv420p -an \
             clip1_base.mp4
 
           add_text clip1_base.mp4 clip1.mp4 caption1.txt
           echo "clip1 ready"
 
-          if [ "$TWO_IMAGES" = "true" ]; then
+          if [ "$SECOND_VIDEO" = "true" ]; then
+            ffmpeg -y -i scene2.mp4 \
+              -vf "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p" \
+              -an -r 30 -c:v libx264 -preset fast -crf 22 -pix_fmt yuv420p \
+              clip2.mp4
+
+            ffmpeg -y -i clip1.mp4 -i clip2.mp4 \
+              -filter_complex "[0:v]fps=30,settb=AVTB[v0];[1:v]fps=30,settb=AVTB[v1];[v0][v1]xfade=transition=dissolve:duration=1:offset=7,format=yuv420p[v]" \
+              -map "[v]" \
+              -t 15 \
+              -r 30 -c:v libx264 -preset fast -crf 22 -pix_fmt yuv420p \
+              slideshow.mp4
+          elif [ "$TWO_IMAGES" = "true" ]; then
             ffmpeg -y -loop 1 -framerate 30 -t 8 -i img2.jpg \
               -vf "scale=2160:3840:force_original_aspect_ratio=increase,crop=2160:3840,zoompan=z='min(1+0.0007*on,1.15)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=30,setsar=1,format=yuv420p" \
               -r 30 -c:v libx264 -preset fast -crf 22 -pix_fmt yuv420p \

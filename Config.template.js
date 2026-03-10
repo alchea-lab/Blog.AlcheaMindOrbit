@@ -15,6 +15,9 @@ const CONFIG = {
 
   SPREADSHEET_ID: '1qFuPCbyRHOVj8PiEAVRLiYuyYYit54l5N0jDjKY47oY',
   SHEET_NAME: '自動投稿管理',
+  VIDEO_PIPELINE_MODE: 'image_plus_video_fixed',
+  FIXED_SECOND_VIDEO_URL: '',
+  FIXED_MUSIC_URL: '',
 
   MAKE_WEBHOOK_URL: '',
 

@@ -280,7 +280,7 @@ function _handleTextMessage(userId, replyToken, text) {
     const images = JSON.parse(props.getProperty('pending_images') || '[]');
 
     if (images.length === 0) {
-      replyToLine(replyToken, '⚠️ 画像がまだ届いていません。\n画像を送ってから「開始」してください。');
+      replyToLine(replyToken, '⚠️ 動画用画像がまだ届いていません。\n画像を1枚送ってから「開始」してください。');
       return;
     }
 
@@ -297,13 +297,9 @@ function _handleTextMessage(userId, replyToken, text) {
     _deleteTriggersFor('phase1_FromLine');
     ScriptApp.newTrigger('phase1_FromLine').timeBased().after(10000).create();
 
-    const modeMsg = textMode === 'first_only'
-      ? '\n📝 モード: 1枚目のみ文字'
-      : '\n📝 モード: 1枚目・2枚目とも文字あり';
-
     replyToLine(
       replyToken,
-      `${scheduledAt.replyMsg}${modeMsg}\n\n⚙️ 文章解析を開始します。完了まで少しお待ちください。`
+      `${scheduledAt.replyMsg}\n\n⚙️ 文章解析を開始します。完了まで少しお待ちください。`
     );
     // Execute once immediately to avoid missing time-based trigger executions.
     phase1_FromLine();
@@ -321,7 +317,7 @@ function _handleTextMessage(userId, replyToken, text) {
     props.deleteProperty('text_mode');
     saveUserState(userId, { phase: 'waiting_image' });
 
-    replyToLine(replyToken, '✅ 本文受信！\n次に画像を1〜2枚送ってください📸');
+    replyToLine(replyToken, '✅ 本文受信！\n次に動画用画像を1枚送ってください📸');
     return;
   }
 
@@ -330,9 +326,8 @@ function _handleTextMessage(userId, replyToken, text) {
     replyToken,
     '🌙 Astro Strategist へようこそ\n\n' +
     '① 本文（Markdown）を送信\n' +
-    '② 画像を1〜2枚送信\n' +
+    '② 動画用画像を1枚送信\n' +
     '③ 「開始」または「開始 明日19時」で実行\n' +
-    '   2枚目を文字なしにしたい時だけ「開始 1のみ」\n' +
     '④ 再配信する時は「再配信」\n\n' +
     '途中でやめる時は「キャンセル」'
   );
@@ -768,6 +763,15 @@ function setupRequiredSheets() {
   );
 }
 
+function ensureRequiredSheetsReady_() {
+  const mainSheet = getSheet();
+  const musicSheet = getMusicSheet();
+  console.log(
+    `[ensureRequiredSheetsReady_] main=${mainSheet.getName()} rows=${mainSheet.getLastRow()} music=${musicSheet.getName()} rows=${musicSheet.getLastRow()}`
+  );
+  return { mainSheet: mainSheet, musicSheet: musicSheet };
+}
+
 /**
  * Appends one record to the managed sheet.
  *
@@ -797,6 +801,29 @@ function saveToSheet(params) {
     '',
     '✅ 生成完了',
   ]);
+}
+
+function usesFixedSecondVideoPipeline_() {
+  return String(CONFIG.VIDEO_PIPELINE_MODE || '') === 'image_plus_video_fixed';
+}
+
+function resolveFixedSecondVideoUrl_() {
+  if (!usesFixedSecondVideoPipeline_()) return '';
+  const url = String(CONFIG.FIXED_SECOND_VIDEO_URL || '').trim();
+  if (!url) {
+    throw new Error(
+      '固定2本目動画URLが未設定です。Config.js の FIXED_SECOND_VIDEO_URL を設定してください。'
+    );
+  }
+  return url;
+}
+
+function resolveVideoMusicUrl_(theme) {
+  if (usesFixedSecondVideoPipeline_()) {
+    const url = String(CONFIG.FIXED_MUSIC_URL || '').trim();
+    if (url) return url;
+  }
+  return selectMusicFromSheet(theme);
 }
 
 /**
@@ -1081,6 +1108,61 @@ function generateYoutubeTags(blog) {
  * }}
  */
 function generateVideoAndCaptions(blog, textMode) {
+  if (usesFixedSecondVideoPipeline_()) {
+    const prompt = [
+      '# Role',
+      'あなたは、親子心理・脳科学テーマのショート動画向けコピーライターです。',
+      '',
+      '# Task',
+      '1枚目の静止画に重ねるダイジェスト文と、Instagram/Threads用キャプションを作成してください。',
+      '2枚目は固定動画素材なので、video_text_2 は必ず空文字にしてください。',
+      '',
+      '# Rules',
+      '- video_text_1 はブログ本文のダイジェストとして作る',
+      '- video_text_1 は 34〜60文字、最大60文字',
+      '- 1文または2文まで。必要なら \\n で自然に改行',
+      '- 説明しすぎず、続きを見たくなる余白を残す',
+      '- video_text_2 は必ず空文字 ""',
+      '- caption_insta は 260〜420文字程度',
+      '- caption_threads は 320〜500文字程度',
+      '- Markdown記号、HTMLタグ、絵文字は使わない',
+      '- JSONのみ出力',
+      '',
+      '# Output Format (JSON)',
+      '{',
+      '  "video_text_1": "",',
+      '  "video_text_2": "",',
+      '  "caption_insta": "",',
+      '  "caption_threads": ""',
+      '}',
+      '',
+      '# Input',
+      `記事タイトル: ${blog.title}`,
+      `記事要約: ${blog.excerpt || ''}`,
+      `本文: ${blog.body.substring(0, 3000)}`
+    ].join('\n');
+
+    const raw = callGemini(prompt);
+    try {
+      const cleaned = raw.replace(/```json|```/gi, '').trim();
+      const parsed = JSON.parse(cleaned);
+      return {
+        video_text_1: parsed.video_text_1 || '',
+        video_text_2: '',
+        caption_insta: parsed.caption_insta || '',
+        caption_threads: parsed.caption_threads || '',
+      };
+    } catch (err) {
+      console.warn('[generateVideoAndCaptions] fixed-pipeline JSON parse failed, fallback used.');
+      return {
+        video_text_1: String(blog.excerpt || blog.title || '').slice(0, 60),
+        video_text_2: '',
+        caption_insta: '本文の要点を静かに掘り下げる短い解説です。詳細はプロフィールのリンクから全体像をご覧いただけるかもしれませんね。',
+        caption_threads: '本文の要点を一歩引いて整理すると、見えてくる仕組みがあるのかもしれませんね。'
+      };
+    }
+  }
+
   const today = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd');
   const variationToken = Utilities.getUuid().slice(0, 8);
   const prompt = [
@@ -1587,14 +1669,17 @@ function phase1_FromLine() {
   _deleteTriggersFor('phase1_FromLine');
 
   try {
+    ensureRequiredSheetsReady_();
+
     const markdown = props.getProperty('pending_markdown') || '';
     const images = JSON.parse(props.getProperty('pending_images') || '[]');
     const imageIds = JSON.parse(props.getProperty('pending_imageIds') || '[]');
     const scheduledAt = props.getProperty('scheduled_at') || '';
     const textMode = props.getProperty('text_mode') || 'both';
+    const effectiveTextMode = usesFixedSecondVideoPipeline_() ? 'first_only' : textMode;
 
     if (!markdown) throw new Error('本文（Markdown）が存在しません。先に本文を送ってください。');
-    if (images.length === 0) throw new Error('画像が1枚も届いていません。画像を送ってから「開始」してください。');
+    if (images.length === 0) throw new Error('動画用画像が届いていません。画像を1枚送ってから「開始」してください。');
     if (imageIds.length !== images.length) {
       throw new Error(
         `画像データの不整合: Drive URL ${images.length}件 / Cloudinary ID ${imageIds.length}件。` +
@@ -1608,6 +1693,7 @@ function phase1_FromLine() {
     const imageUrl2 = images[1] || '';
     const publicId1 = imageIds[0];
     const publicId2 = imageIds[1] || '';
+    const secondVideoUrl = resolveFixedSecondVideoUrl_();
 
     // Step 1
     pushToLine(userId, '⚙️ [1/4] 記事を解析中...');
@@ -1616,7 +1702,7 @@ function phase1_FromLine() {
     // Step 2
     pushToLine(userId, '✍️ [2/4] キャプションと動画字幕を生成中...');
     const hashtags = generateHashtags(analyzed);
-    const generatedTexts = generateVideoAndCaptions(analyzed, textMode);
+    const generatedTexts = generateVideoAndCaptions(analyzed, effectiveTextMode);
 
     const rawVideoText1 = generatedTexts.video_text_1;
     const rawVideoText2 = generatedTexts.video_text_2;
@@ -1653,7 +1739,7 @@ function phase1_FromLine() {
 
     // Step 3
     pushToLine(userId, '🎵 [3/4] BGMを選定中...');
-    const musicUrl = selectMusicFromSheet(analyzed.theme);
+    const musicUrl = resolveVideoMusicUrl_(analyzed.theme);
 
     // Cloudinary image URLs
     const cloudinaryBase = `https://res.cloudinary.com/${CONFIG.CLOUDINARY_CLOUD_NAME}/image/upload`;
@@ -1667,7 +1753,7 @@ function phase1_FromLine() {
       title: analyzed.title,
       captionInstagram: captionInstagram,
       imageUrl1: imageUrl1,
-      imageUrl2: imageUrl2,
+      imageUrl2: secondVideoUrl || imageUrl2,
       driveVideoUrl: '',
       musicUrl: musicUrl,
       wpUrl: '',
@@ -1693,9 +1779,10 @@ function phase1_FromLine() {
       image_url2: cloudinaryImg2,
       image_public_id_1: publicId1,
       image_public_id_2: publicId2,
+      second_video_url: secondVideoUrl,
       music_url: musicUrl,
       video_text_1: videoText1,
-      video_text_2: videoText2,
+      video_text_2: usesFixedSecondVideoPipeline_() ? '' : videoText2,
       caption_instagram: captionInstagram,
       publish_payload_json: JSON.stringify(publishPayload)
     });
