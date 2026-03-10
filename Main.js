@@ -712,6 +712,29 @@ function getSheet() {
 }
 
 /**
+ * Ensures 音楽リスト sheet exists with required headers.
+ * This sheet still requires manual row data (genre/mood/url).
+ *
+ * @returns {GoogleAppsScript.Spreadsheet.Sheet}
+ */
+function getMusicSheet() {
+  const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+  let sheet = ss.getSheetByName('音楽リスト');
+
+  if (!sheet) {
+    sheet = ss.insertSheet('音楽リスト');
+    sheet.getRange(1, 1, 1, 3).setValues([['ジャンル', '雰囲気', '音楽URL']]);
+    sheet.getRange(1, 1, 1, 3)
+      .setBackground('#1a1a2e')
+      .setFontColor('#c9a96e')
+      .setFontWeight('bold');
+    sheet.setFrozenRows(1);
+  }
+
+  return sheet;
+}
+
+/**
  * Appends one record to the managed sheet.
  *
  * @param {object} p
@@ -749,12 +772,14 @@ function saveToSheet(params) {
  * @returns {string}
  */
 function selectMusicFromSheet(theme) {
-  const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
-  const sheet = ss.getSheetByName('音楽リスト');
-  if (!sheet) throw new Error('「音楽リスト」シートが見つかりません');
+  const sheet = getMusicSheet();
 
   const rows = sheet.getDataRange().getValues().slice(1);
-  if (rows.length === 0) throw new Error('音楽リストが空です');
+  if (rows.length === 0) {
+    throw new Error(
+      '「音楽リスト」を作成しました。A=ジャンル / B=雰囲気 / C=音楽URL を2行目以降に入力してください。'
+    );
+  }
 
   const list = rows.map(function(r, i) {
     return `${i}: ジャンル=${r[0]}, 雰囲気=${r[1]}`;
