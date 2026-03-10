@@ -40,6 +40,18 @@
 function replyToLine(replyToken, message) {
   if (!replyToken || !message || String(message).trim() === '') return;
 
+  replyToLineMessages(replyToken, [{ type: 'text', text: String(message) }]);
+}
+
+/**
+ * LINE Reply API — sends message objects.
+ *
+ * @param {string} replyToken
+ * @param {Array<object>} messages
+ */
+function replyToLineMessages(replyToken, messages) {
+  if (!replyToken || !messages || !messages.length) return;
+
   UrlFetchApp.fetch('https://api.line.me/v2/bot/message/reply', {
     method: 'POST',
     muteHttpExceptions: true,
@@ -49,7 +61,7 @@ function replyToLine(replyToken, message) {
     },
     payload: JSON.stringify({
       replyToken: replyToken,
-      messages: [{ type: 'text', text: String(message) }],
+      messages: messages,
     }),
   });
 }
@@ -239,6 +251,16 @@ function _updateSheetVideoUrl(videoUrl) {
 function _handleTextMessage(userId, replyToken, text) {
   const props = PropertiesService.getScriptProperties();
 
+  // ── 再配信 ────────────────────────────────────────────────
+  if (text === '再配信' || text === '再配信ボタン') {
+    _replyRepostButtons(replyToken);
+    return;
+  }
+  if (text.indexOf('再配信 ') === 0) {
+    _handleRepostCommand(userId, replyToken, text);
+    return;
+  }
+
   // ── キャンセル ──────────────────────────────────────────────
   if (text === 'キャンセル') {
     _cancelPipeline(userId, props);
@@ -303,9 +325,191 @@ function _handleTextMessage(userId, replyToken, text) {
     '① 本文（Markdown）を送信\n' +
     '② 画像を1〜2枚送信\n' +
     '③ 「開始」または「開始 明日19時」で実行\n' +
-    '   2枚目を文字なしにしたい時だけ「開始 1のみ」\n\n' +
+    '   2枚目を文字なしにしたい時だけ「開始 1のみ」\n' +
+    '④ 再配信する時は「再配信」\n\n' +
     '途中でやめる時は「キャンセル」'
   );
+}
+
+/**
+ * Sends LINE quick-reply buttons for repost actions.
+ *
+ * @param {string} replyToken
+ * @private
+ */
+function _replyRepostButtons(replyToken) {
+  const today = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd');
+  const message = {
+    type: 'text',
+    text:
+      '再配信メニューです。\n' +
+      '対象ボタンを押してください。\n' +
+      '日付指定は「再配信 YYYY-MM-DD insta」の形式で送れます。',
+    quickReply: {
+      items: [
+        { type: 'action', action: { type: 'message', label: 'Insta 再配信', text: '再配信 insta' } },
+        { type: 'action', action: { type: 'message', label: 'YouTube 再配信', text: '再配信 youtube' } },
+        { type: 'action', action: { type: 'message', label: 'ブログ 再配信', text: '再配信 blog' } },
+        { type: 'action', action: { type: 'message', label: '全部 再配信', text: '再配信 all' } },
+        { type: 'action', action: { type: 'message', label: '今日を再配信', text: '再配信 ' + today + ' all' } }
+      ]
+    }
+  };
+  replyToLineMessages(replyToken, [message]);
+}
+
+/**
+ * Parses channel token.
+ *
+ * @param {string} token
+ * @returns {string|null}
+ * @private
+ */
+function _parseRepostChannel(token) {
+  const t = String(token || '').toLowerCase();
+  if (!t) return null;
+  if (t === 'insta' || t === 'instagram' || t === 'インスタ') return 'instagram';
+  if (t === 'youtube' || t === 'yt' || t === 'ユーチューブ' || t === 'youtubeのみ') return 'youtube';
+  if (t === 'blog' || t === 'wordpress' || t === 'wp' || t === 'ブログ') return 'wordpress';
+  if (t === 'all' || t === '全部' || t === 'すべて') return 'all';
+  return null;
+}
+
+/**
+ * Finds target row by date (or latest row).
+ *
+ * @param {string} dateText
+ * @returns {{rowNumber:number,row:Array<*>}|null}
+ * @private
+ */
+function _findRepostRow(dateText) {
+  const sheet = getSheet();
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return null;
+
+  const values = sheet.getRange(2, 1, lastRow - 1, 13).getValues();
+  if (!dateText) {
+    return { rowNumber: lastRow, row: values[values.length - 1] };
+  }
+
+  for (let i = values.length - 1; i >= 0; i--) {
+    const created = values[i][0];
+    const scheduled = String(values[i][1] || '');
+
+    const createdDate = created instanceof Date
+      ? Utilities.formatDate(created, 'Asia/Tokyo', 'yyyy-MM-dd')
+      : String(created || '').substring(0, 10);
+
+    if (createdDate === dateText || scheduled.indexOf(dateText) === 0) {
+      return { rowNumber: i + 2, row: values[i] };
+    }
+  }
+  return null;
+}
+
+/**
+ * Sends repost payload to Make based on command.
+ *
+ * command examples:
+ * - 再配信 insta
+ * - 再配信 2026-03-10 youtube
+ * - 再配信 blog 2026-03-10
+ *
+ * @param {string} userId
+ * @param {string} replyToken
+ * @param {string} text
+ * @private
+ */
+function _handleRepostCommand(userId, replyToken, text) {
+  try {
+    const parts = String(text || '').trim().split(/\s+/).slice(1);
+    if (parts.length === 0) {
+      _replyRepostButtons(replyToken);
+      return;
+    }
+
+    let dateText = '';
+    let channel = null;
+
+    parts.forEach(function(p) {
+      if (/^\d{4}-\d{2}-\d{2}$/.test(p)) {
+        dateText = p;
+      } else if (!channel) {
+        channel = _parseRepostChannel(p);
+      }
+    });
+
+    if (!channel) {
+      replyToLine(
+        replyToken,
+        '再配信コマンド形式:\n' +
+        '・再配信 insta\n' +
+        '・再配信 youtube\n' +
+        '・再配信 blog\n' +
+        '・再配信 all\n' +
+        '・再配信 YYYY-MM-DD insta'
+      );
+      return;
+    }
+
+    const found = _findRepostRow(dateText);
+    if (!found) {
+      replyToLine(replyToken, '指定日のデータが見つかりませんでした。日付を確認してください。');
+      return;
+    }
+
+    const row = found.row;
+    const title = String(row[2] || '');
+    const captionInstagram = String(row[3] || '');
+    const imageUrl1 = String(row[4] || '');
+    const imageUrl2 = String(row[5] || '');
+    const driveVideoUrl = String(row[6] || '');
+    const musicUrl = String(row[7] || '');
+    const composedVideoUrl = String(row[8] || '');
+    const wpUrl = String(row[9] || '');
+    const videoUrl = composedVideoUrl || driveVideoUrl;
+
+    if (!videoUrl) {
+      replyToLine(replyToken, '再配信対象の動画URLが空です。先に動画生成を完了してください。');
+      return;
+    }
+
+    const props = PropertiesService.getScriptProperties();
+    const captionYouTube = props.getProperty('last_caption_youtube') || title;
+    const youtubeTags = JSON.parse(props.getProperty('last_youtube_tags') || '[]');
+
+    sendToMakeWebhook({
+      repost: true,
+      repost_channel: channel,
+      repost_row: found.rowNumber,
+      repost_date: dateText || 'latest',
+      repost_user_id: userId,
+      video_url: videoUrl,
+      cloudinary_video_url: videoUrl,
+      image_url1: imageUrl1,
+      image_url2: imageUrl2,
+      music_url: musicUrl,
+      caption_instagram: captionInstagram,
+      caption_threads: '',
+      caption_youtube: captionYouTube,
+      tags_youtube: youtubeTags,
+      title: title,
+      body: '',
+      wordpress_url: wpUrl,
+      scheduled_at: ''
+    });
+
+    replyToLine(
+      replyToken,
+      `✅ 再配信を受け付けました。\n` +
+      `対象: ${channel}\n` +
+      `行: ${found.rowNumber}\n` +
+      `${dateText ? '日付: ' + dateText : '日付: 最新'}`
+    );
+  } catch (err) {
+    console.error('[_handleRepostCommand] Error:', err.message, err.stack);
+    replyToLine(replyToken, '❌ 再配信でエラーが発生しました: ' + err.message);
+  }
 }
 
 /**
