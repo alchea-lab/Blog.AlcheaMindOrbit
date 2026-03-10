@@ -1,0 +1,415 @@
+name: Create Video with FFmpeg
+
+on:
+  repository_dispatch:
+    types: [create-video]
+
+jobs:
+  create-video:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Install FFmpeg and dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg curl jq fonts-noto-cjk fontconfig openssl
+          fc-cache -fv
+
+          FONT=$(fc-list :lang=ja | grep -i 'Noto\|noto' | head -1 | cut -d: -f1)
+          if [ -z "$FONT" ]; then
+            FONT=$(fc-list | head -1 | cut -d: -f1)
+          fi
+
+          echo "FONT_PATH=$FONT" >> $GITHUB_ENV
+          echo "Found font: $FONT"
+
+      - name: Download images
+        env:
+          IMG1: ${{ github.event.client_payload.image_url1 }}
+          IMG2: ${{ github.event.client_payload.image_url2 }}
+        run: |
+          if [ -z "$IMG1" ]; then
+            echo "ERROR: image_url1 is missing"
+            exit 1
+          fi
+
+          echo "Downloading IMG1..."
+          curl -fL --retry 3 --retry-delay 2 --max-time 60 "$IMG1" -o img1.jpg
+
+          if [ -n "$IMG2" ]; then
+            echo "Downloading IMG2..."
+            curl -fL --retry 3 --retry-delay 2 --max-time 60 "$IMG2" -o img2.jpg
+            echo "TWO_IMAGES=true" >> $GITHUB_ENV
+          else
+            echo "TWO_IMAGES=false" >> $GITHUB_ENV
+          fi
+
+      - name: Download BGM
+        env:
+          MUSIC_URL: ${{ github.event.client_payload.music_url }}
+        run: |
+          if [ -n "$MUSIC_URL" ]; then
+            echo "Downloading BGM..."
+            curl -fL --retry 3 --retry-delay 2 --max-time 60 "$MUSIC_URL" -o bgm.mp3
+            echo "HAS_BGM=true" >> $GITHUB_ENV
+          else
+            echo "HAS_BGM=false" >> $GITHUB_ENV
+          fi
+
+      - name: Create slideshow with per-clip caption
+        env:
+          VIDEO_TEXT_1: ${{ github.event.client_payload.video_text_1 }}
+          VIDEO_TEXT_2: ${{ github.event.client_payload.video_text_2 }}
+        run: |
+          python3 << 'PYEOF'
+          import html
+          import os
+          import re
+          import unicodedata
+
+          raw1 = os.environ.get('VIDEO_TEXT_1', '')
+          raw2 = os.environ.get('VIDEO_TEXT_2', '')
+
+          def wrap_text(t, max_line_chars=16, max_lines=3):
+              if not t:
+                  return ''
+              lines = [t[i:i + max_line_chars] for i in range(0, len(t), max_line_chars)]
+              lines = lines[:max_lines]
+              return '\n'.join(lines)
+
+          def clean(t, max_chars=44):
+              t = html.unescape(str(t or ''))
+              t = t.replace('\r\n', '\n').replace('\r', '\n')
+              t = re.sub(r'<[^>]*>', '', t)
+              t = re.sub(r'[*_~`#\[\]\(\)!]', '', t)
+              t = re.sub(r'\s+', ' ', t).strip()
+              t = ''.join(c for c in t if unicodedata.category(c) not in ('Cc', 'Cs'))
+              t = t.replace('"', '”').replace(':', '：').replace('\\', '￥').replace("'", '’').replace('%', '％')
+              t = (t[:max_chars] + '...') if len(t) > max_chars else t
+              return wrap_text(t, max_line_chars=16, max_lines=3)
+
+          h1 = clean(raw1)
+          h2 = clean(raw2)
+
+          print(f'RAW video_text_1={raw1!r}')
+          print(f'RAW video_text_2={raw2!r}')
+          print(f'NORMALIZED video_text_1={h1!r}')
+          print(f'NORMALIZED video_text_2={h2!r}')
+
+          with open('caption1.txt', 'w', encoding='utf-8') as f:
+              f.write(h1)
+          with open('caption2.txt', 'w', encoding='utf-8') as f:
+              f.write(h2)
+          print(f'caption1 length={len(h1)}')
+          print(f'caption2 length={len(h2)}')
+          PYEOF
+
+          echo "FONT_PATH=$FONT_PATH"
+          echo "caption1.txt:"
+          cat caption1.txt || true
+          echo "caption2.txt:"
+          cat caption2.txt || true
+
+          add_text() {
+            local in_file="$1"
+            local out_file="$2"
+            local txt_file="$3"
+
+            if [ -s "$txt_file" ]; then
+              ffmpeg -y -i "$in_file" \
+                -vf "drawtext=font='Noto Sans CJK JP':textfile='${txt_file}':reload=1:text_shaping=1:fontcolor=white:fontsize=52:line_spacing=12:x=(w-text_w)/2:y=(h-text_h)/2:shadowcolor=black@0.85:shadowx=3:shadowy=3:alpha='if(lt(t\\,0.8)\\,t/0.8\\,if(lt(t\\,6.8)\\,1\\,if(lt(t\\,8.0)\\,(8.0-t)/1.2\\,0)))'" \
+                -c:v libx264 -preset fast -crf 22 -pix_fmt yuv420p "$out_file" \
+                && echo "Text OK: $out_file" \
+                || { echo "Text FAILED - using plain clip"; cp "$in_file" "$out_file"; }
+            else
+              cp "$in_file" "$out_file"
+            fi
+          }
+
+          ffmpeg -y -loop 1 -framerate 30 -t 8 -i img1.jpg \
+            -vf "scale=2160:3840:force_original_aspect_ratio=increase,crop=2160:3840,zoompan=z='min(1+0.0007*on,1.15)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=30,setsar=1,format=yuv420p" \
+            -r 30 -c:v libx264 -preset fast -crf 22 -pix_fmt yuv420p \
+            clip1_base.mp4
+
+          add_text clip1_base.mp4 clip1.mp4 caption1.txt
+          echo "clip1 ready"
+
+          if [ "$TWO_IMAGES" = "true" ]; then
+            ffmpeg -y -loop 1 -framerate 30 -t 8 -i img2.jpg \
+              -vf "scale=2160:3840:force_original_aspect_ratio=increase,crop=2160:3840,zoompan=z='min(1+0.0007*on,1.15)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=30,setsar=1,format=yuv420p" \
+              -r 30 -c:v libx264 -preset fast -crf 22 -pix_fmt yuv420p \
+              clip2_base.mp4
+
+            if [ -s caption2.txt ]; then
+              add_text clip2_base.mp4 clip2.mp4 caption2.txt
+            else
+              cp clip2_base.mp4 clip2.mp4
+              echo "clip2 has no text"
+            fi
+
+            echo "clip2 ready"
+
+            ffmpeg -y -i clip1.mp4 -i clip2.mp4 \
+              -filter_complex "[0:v]fps=30,settb=AVTB[v0];[1:v]fps=30,settb=AVTB[v1];[v0][v1]xfade=transition=dissolve:duration=1:offset=7,format=yuv420p[v]" \
+              -map "[v]" \
+              -t 15 \
+              -r 30 -c:v libx264 -preset fast -crf 22 -pix_fmt yuv420p \
+              slideshow.mp4
+          else
+            ffmpeg -y -loop 1 -framerate 30 -t 15 -i img1.jpg \
+              -vf "scale=2160:3840:force_original_aspect_ratio=increase,crop=2160:3840,zoompan=z='min(1+0.00035*on,1.15)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=30,setsar=1,format=yuv420p,drawtext=font='Noto Sans CJK JP':textfile='caption1.txt':reload=1:text_shaping=1:fontcolor=white:fontsize=52:line_spacing=12:x=(w-text_w)/2:y=(h-text_h)/2:shadowcolor=black@0.85:shadowx=3:shadowy=3:alpha='if(lt(t,0.8),t/0.8,if(lt(t,6.7),1,if(lt(t,7.5),(7.5-t)/0.8,0)))',drawtext=font='Noto Sans CJK JP':textfile='caption2.txt':reload=1:text_shaping=1:fontcolor=white:fontsize=52:line_spacing=12:x=(w-text_w)/2:y=(h-text_h)/2:shadowcolor=black@0.85:shadowx=3:shadowy=3:alpha='if(lt(t,7.5),0,if(lt(t,8.3),(t-7.5)/0.8,if(lt(t,14.2),1,if(lt(t,15),(15-t)/0.8,0))))'" \
+              -r 30 -c:v libx264 -preset fast -crf 22 -pix_fmt yuv420p \
+              slideshow.mp4
+          fi
+
+          echo "slideshow ready"
+          SLIDESHOW_DURATION=$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 slideshow.mp4 || echo "0")
+          echo "SLIDESHOW_DURATION=$SLIDESHOW_DURATION" >> $GITHUB_ENV
+          echo "slideshow duration: ${SLIDESHOW_DURATION}s"
+          python3 - "$SLIDESHOW_DURATION" << 'PYEOF'
+          import math
+          import sys
+          d = float(sys.argv[1]) if len(sys.argv) > 1 else 0.0
+          if math.fabs(d - 15.0) > 0.25:
+              print(f"ERROR: slideshow duration is {d:.3f}s (expected ~15s)")
+              sys.exit(1)
+          print(f"Duration check OK: {d:.3f}s")
+          PYEOF
+
+          if [ "$HAS_BGM" = "true" ]; then
+            ffmpeg -y -i slideshow.mp4 -i bgm.mp3 \
+              -map 0:v -map 1:a \
+              -c:v copy -c:a aac -b:a 128k -af "volume=0.4" -shortest \
+              output.mp4
+          else
+            cp slideshow.mp4 output.mp4
+          fi
+
+          OUTPUT_DURATION=$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 output.mp4 || echo "0")
+          echo "OUTPUT_DURATION=$OUTPUT_DURATION" >> $GITHUB_ENV
+          echo "output duration: ${OUTPUT_DURATION}s"
+          echo "VIDEO_SIZE=$(du -k output.mp4 | cut -f1)" >> $GITHUB_ENV
+
+      - name: Upload video to Cloudinary
+        env:
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+        run: |
+          TIMESTAMP=$(date +%s)
+          SIGNATURE=$(echo -n "timestamp=${TIMESTAMP}${CLOUDINARY_API_SECRET}" | openssl sha1 | awk '{print $2}')
+
+          RESPONSE=$(curl -s -X POST \
+            "https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/video/upload" \
+            -F "file=@output.mp4" \
+            -F "api_key=${CLOUDINARY_API_KEY}" \
+            -F "timestamp=${TIMESTAMP}" \
+            -F "signature=${SIGNATURE}")
+
+          ERROR_MSG=$(echo "$RESPONSE" | jq -r '.error.message // empty')
+          VIDEO_URL=$(echo "$RESPONSE" | jq -r '.secure_url // empty')
+
+          if [ -n "$ERROR_MSG" ]; then
+            echo "ERROR: Cloudinary upload failed: $ERROR_MSG"
+            exit 1
+          fi
+
+          if [ -z "$VIDEO_URL" ]; then
+            echo "ERROR: Cloudinary upload failed: secure_url missing"
+            exit 1
+          fi
+
+          echo "VIDEO_URL=$VIDEO_URL" >> $GITHUB_ENV
+          echo "Video uploaded successfully."
+
+      - name: Notify GAS callback (LINE + Spreadsheet)
+        continue-on-error: true
+        env:
+          GAS_WEBHOOK_URL: https://script.google.com/macros/s/AKfycbzLybUcoNYqpHFSMlcv36TudE1X8cTyg9Ll5fpS2-f83-alvVT_GlarrmSpTVNrcevBLQ/exec
+          VIDEO_URL: ${{ env.VIDEO_URL }}
+        run: |
+          if [ -z "$GAS_WEBHOOK_URL" ]; then
+            echo "ERROR: GAS_WEBHOOK_URL is missing"
+            exit 1
+          fi
+
+          if [ -z "$VIDEO_URL" ] || [ "$VIDEO_URL" = "null" ]; then
+            echo "ERROR: VIDEO_URL is empty; cannot notify GAS"
+            exit 1
+          fi
+
+          echo "Notifying GAS callback..."
+          echo "GAS callback URL: $GAS_WEBHOOK_URL"
+
+          JSON_PAYLOAD=$(jq -n --arg url "$VIDEO_URL" '{action:"video_complete", video_url:$url}')
+          echo "Payload for GAS: $JSON_PAYLOAD"
+
+          HTTP_STATUS=$(curl -s -o /tmp/gas_resp.txt -w "%{http_code}" \
+            -X POST "$GAS_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d "$JSON_PAYLOAD" \
+            -L --max-redirs 5 \
+            --post301 --post302 --post303)
+
+          echo "GAS callback HTTP status: $HTTP_STATUS"
+          echo "GAS response body:"
+          cat /tmp/gas_resp.txt || true
+
+          if [ "$HTTP_STATUS" -lt 200 ] || [ "$HTTP_STATUS" -ge 300 ]; then
+            echo "WARNING: GAS callback failed with status $HTTP_STATUS (continue to Make webhook)"
+          fi
+          if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 300 ]; then
+            echo "GAS callback success"
+          fi
+
+      - name: Notify Make webhook
+        continue-on-error: true
+        env:
+          MAKE_WEBHOOK_URL: ${{ secrets.MAKE_WEBHOOK_URL }}
+          VIDEO_URL: ${{ env.VIDEO_URL }}
+          IMAGE_URL1: ${{ github.event.client_payload.image_url1 }}
+          IMAGE_URL2: ${{ github.event.client_payload.image_url2 }}
+          CAPTION_INSTAGRAM: ${{ github.event.client_payload.caption_instagram }}
+          PUBLISH_PAYLOAD_JSON: ${{ github.event.client_payload.publish_payload_json }}
+          VIDEO_TEXT_1: ${{ github.event.client_payload.video_text_1 }}
+          VIDEO_TEXT_2: ${{ github.event.client_payload.video_text_2 }}
+        run: |
+          if [ -z "$MAKE_WEBHOOK_URL" ]; then
+            echo "ERROR: MAKE_WEBHOOK_URL is missing"
+            exit 0
+          fi
+
+          echo "MAKE webhook target (masked): ${MAKE_WEBHOOK_URL:0:32}..."
+
+          if [ -z "$PUBLISH_PAYLOAD_JSON" ] || [ "$PUBLISH_PAYLOAD_JSON" = "null" ]; then
+            PUBLISH_PAYLOAD_JSON='{}'
+          fi
+
+          CAPTION_THREADS=$(echo "$PUBLISH_PAYLOAD_JSON" | jq -r '.caption_threads // ""')
+          CAPTION_YOUTUBE=$(echo "$PUBLISH_PAYLOAD_JSON" | jq -r '.caption_youtube // ""')
+          TITLE=$(echo "$PUBLISH_PAYLOAD_JSON" | jq -r '.title // ""')
+          BODY=$(echo "$PUBLISH_PAYLOAD_JSON" | jq -r '.body // ""')
+          SCHEDULED_AT=$(echo "$PUBLISH_PAYLOAD_JSON" | jq -r '.scheduled_at // ""')
+          TAGS_JSON=$(echo "$PUBLISH_PAYLOAD_JSON" | jq -c '.tags_youtube // []')
+
+          TITLE_YOUTUBE="${TITLE} #shorts"
+
+          PAYLOAD=$(jq -n \
+            --arg video_url            "$VIDEO_URL" \
+            --arg cloudinary_video_url "$VIDEO_URL" \
+            --arg image_url1           "$IMAGE_URL1" \
+            --arg image_url2           "$IMAGE_URL2" \
+            --arg caption_instagram    "$CAPTION_INSTAGRAM" \
+            --arg caption_threads      "$CAPTION_THREADS" \
+            --arg caption_youtube      "$CAPTION_YOUTUBE" \
+            --arg title                "$TITLE" \
+            --arg title_youtube        "$TITLE_YOUTUBE" \
+            --arg body                 "$BODY" \
+            --arg scheduled_at         "$SCHEDULED_AT" \
+            --arg video_text_1         "$VIDEO_TEXT_1" \
+            --arg video_text_2         "$VIDEO_TEXT_2" \
+            --argjson tags_youtube     "$TAGS_JSON" \
+            '{
+              video_url: $video_url,
+              cloudinary_video_url: $cloudinary_video_url,
+              image_url1: $image_url1,
+              image_url2: $image_url2,
+              caption_instagram: $caption_instagram,
+              caption_threads: $caption_threads,
+              caption_youtube: $caption_youtube,
+              title: $title,
+              title_youtube: $title_youtube,
+              tags_youtube: $tags_youtube,
+              body: $body,
+              scheduled_at: $scheduled_at,
+              video_text_1: $video_text_1,
+              video_text_2: $video_text_2
+            }')
+
+          echo "Sending payload to Make..."
+          RESPONSE=$(curl -s -o /tmp/make_resp.txt -w "%{http_code}" \
+            -X POST "$MAKE_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            --max-time 120 \
+            --retry 2 --retry-delay 2)
+
+          echo "Make webhook HTTP status: $RESPONSE"
+          echo "Make webhook response body:"
+          cat /tmp/make_resp.txt || true
+          if [ "$RESPONSE" = "410" ]; then
+            echo "WARNING: Make webhook URL is invalid/retired (410). Update MAKE_WEBHOOK_URL secret."
+            exit 0
+          fi
+          if [ "$RESPONSE" != "200" ] && [ "$RESPONSE" != "201" ] && [ "$RESPONSE" != "202" ]; then
+            echo "WARNING: Make webhook returned $RESPONSE (continue)."
+            exit 0
+          fi
+
+      - name: Cleanup Cloudinary source assets
+        if: ${{ always() && env.VIDEO_URL != '' }}
+        env:
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+          IMAGE_PUBLIC_ID_1: ${{ github.event.client_payload.image_public_id_1 }}
+          IMAGE_PUBLIC_ID_2: ${{ github.event.client_payload.image_public_id_2 }}
+          MUSIC_URL: ${{ github.event.client_payload.music_url }}
+        run: |
+          set +e
+
+          if [ -z "$CLOUDINARY_CLOUD_NAME" ] || [ -z "$CLOUDINARY_API_KEY" ] || [ -z "$CLOUDINARY_API_SECRET" ]; then
+            echo "Cloudinary credentials are missing. Skip cleanup."
+            exit 0
+          fi
+
+          destroy_asset() {
+            local public_id="$1"
+            local resource_type="$2"
+            if [ -z "$public_id" ]; then
+              return 0
+            fi
+
+            local timestamp signature response result
+            timestamp=$(date +%s)
+            signature=$(echo -n "public_id=${public_id}&timestamp=${timestamp}${CLOUDINARY_API_SECRET}" | openssl sha1 | awk '{print $2}')
+            response=$(curl -s -X POST \
+              "https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/${resource_type}/destroy" \
+              -F "public_id=${public_id}" \
+              -F "api_key=${CLOUDINARY_API_KEY}" \
+              -F "timestamp=${timestamp}" \
+              -F "signature=${signature}")
+            result=$(echo "$response" | jq -r '.result // empty')
+            echo "cleanup ${resource_type}:${public_id} => ${result:-unknown}"
+          }
+
+          extract_music_public_id() {
+            local url="$1"
+            if [[ "$url" != *"res.cloudinary.com/${CLOUDINARY_CLOUD_NAME}/"* ]] || [[ "$url" != *"/upload/"* ]]; then
+              return 0
+            fi
+            local path
+            path=$(echo "$url" | sed -E 's#^https?://[^/]+/##; s#\\?.*$##')
+            local after_upload
+            after_upload=$(echo "$path" | sed -E 's#^.+/upload/##')
+
+            if [[ "$after_upload" =~ /v[0-9]+/ ]]; then
+              echo "$after_upload" | sed -E 's#^.*?/v[0-9]+/##; s#\\.[A-Za-z0-9]+$##'
+              return 0
+            fi
+            return 0
+          }
+
+          # Keep source images because Make (WordPress/Instagram routes)
+          # may still need to download them after this workflow completes.
+          echo "Skip deleting source images to keep Make downstream stable."
+
+          # If BGM is hosted on this Cloudinary account, try cleanup.
+          MUSIC_PUBLIC_ID=$(extract_music_public_id "$MUSIC_URL")
+          if [ -n "$MUSIC_PUBLIC_ID" ]; then
+            destroy_asset "$MUSIC_PUBLIC_ID" "video"
+            destroy_asset "$MUSIC_PUBLIC_ID" "raw"
+          else
+            echo "music_url is not a Cloudinary asset on this account. Skip music cleanup."
+          fi
