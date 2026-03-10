@@ -25,6 +25,46 @@
  * ================================================================
  */
 
+const SCRIPT_PROPERTY_CONFIG_KEYS = [
+  'GEMINI_API_KEY',
+  'GEMINI_MODEL',
+  'LINE_ACCESS_TOKEN',
+  'CLOUDINARY_CLOUD_NAME',
+  'CLOUDINARY_API_KEY',
+  'CLOUDINARY_API_SECRET',
+  'DRIVE_FOLDER_ID',
+  'DRIVE_VIDEO_FOLDER_ID',
+  'SPREADSHEET_ID',
+  'SHEET_NAME',
+  'VIDEO_PIPELINE_MODE',
+  'FIXED_SECOND_VIDEO_URL',
+  'FIXED_MUSIC_URL',
+  'MAKE_WEBHOOK_URL',
+  'MAKE_SYSTEM_ID',
+  'GITHUB_TOKEN',
+  'GITHUB_OWNER',
+  'GITHUB_REPO',
+  'WP_URL',
+  'WP_USERNAME',
+  'WP_APP_PASSWORD',
+  'SUBSTACK_DRAFT_EMAIL',
+];
+
+function applyScriptPropertyConfigOverrides_() {
+  try {
+    const props = PropertiesService.getScriptProperties().getProperties();
+    SCRIPT_PROPERTY_CONFIG_KEYS.forEach((key) => {
+      if (Object.prototype.hasOwnProperty.call(props, key) && String(props[key]).trim() !== '') {
+        CONFIG[key] = props[key];
+      }
+    });
+  } catch (err) {
+    console.warn('[config] Script Properties override skipped:', err.message);
+  }
+}
+
+applyScriptPropertyConfigOverrides_();
+
 
 // ================================================================
 //  LAYER 1 ─ LINE I/O
@@ -1637,11 +1677,18 @@ function _normalizeVideoText(value) {
  * @param {Object} params
  */
 function sendToMakeWebhook(params) {
+  const payload = Object.assign(
+    {
+      system_id: (CONFIG.MAKE_SYSTEM_ID || 'alchea_mind_orbit'),
+    },
+    params || {}
+  );
+
   UrlFetchApp.fetch(CONFIG.MAKE_WEBHOOK_URL, {
     method: 'POST',
     contentType: 'application/json',
     muteHttpExceptions: true,
-    payload: JSON.stringify(params),
+    payload: JSON.stringify(payload),
   });
 }
 
@@ -1766,6 +1813,7 @@ function phase1_FromLine() {
     );
 
     const publishPayload = {
+      system_id: (CONFIG.MAKE_SYSTEM_ID || 'alchea_mind_orbit'),
       caption_threads: captionThreads,
       caption_youtube: captionYouTube,
       tags_youtube: youtubeTags,

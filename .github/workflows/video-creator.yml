@@ -320,6 +320,7 @@ jobs:
 
           CAPTION_THREADS=$(echo "$PUBLISH_PAYLOAD_JSON" | jq -r '.caption_threads // ""')
           CAPTION_YOUTUBE=$(echo "$PUBLISH_PAYLOAD_JSON" | jq -r '.caption_youtube // ""')
+          SYSTEM_ID=$(echo "$PUBLISH_PAYLOAD_JSON" | jq -r '.system_id // "alchea_mind_orbit"')
           TITLE=$(echo "$PUBLISH_PAYLOAD_JSON" | jq -r '.title // ""')
           BODY=$(echo "$PUBLISH_PAYLOAD_JSON" | jq -r '.body // ""')
           SCHEDULED_AT=$(echo "$PUBLISH_PAYLOAD_JSON" | jq -r '.scheduled_at // ""')
@@ -335,6 +336,7 @@ jobs:
             --arg caption_instagram    "$CAPTION_INSTAGRAM" \
             --arg caption_threads      "$CAPTION_THREADS" \
             --arg caption_youtube      "$CAPTION_YOUTUBE" \
+            --arg system_id            "$SYSTEM_ID" \
             --arg title                "$TITLE" \
             --arg title_youtube        "$TITLE_YOUTUBE" \
             --arg body                 "$BODY" \
@@ -347,6 +349,7 @@ jobs:
               cloudinary_video_url: $cloudinary_video_url,
               image_url1: $image_url1,
               image_url2: $image_url2,
+              system_id: $system_id,
               caption_instagram: $caption_instagram,
               caption_threads: $caption_threads,
               caption_youtube: $caption_youtube,

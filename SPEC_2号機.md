@@ -79,6 +79,7 @@
 - シナリオは `Immediately as data arrives`
 - `Regenerate structure` 実施済み前提
 - 再配信では `repost_channel` を見て媒体分岐する
+- 統合シナリオへ寄せる場合は `system_id = "alchea_mind_orbit"` で Router 分岐する
 
 ## 8. WordPress連携
 - 投稿先サイト: `https://bijoux-graces.com`
