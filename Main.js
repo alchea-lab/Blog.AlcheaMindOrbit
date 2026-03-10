@@ -251,6 +251,13 @@ function _updateSheetVideoUrl(videoUrl) {
 function _handleTextMessage(userId, replyToken, text) {
   const props = PropertiesService.getScriptProperties();
 
+  // ── シート初期化 ───────────────────────────────────────────
+  if (text === 'シート初期化') {
+    const result = setupRequiredSheets();
+    replyToLine(replyToken, result);
+    return;
+  }
+
   // ── 再配信 ────────────────────────────────────────────────
   if (text === '再配信' || text === '再配信ボタン') {
     _replyRepostButtons(replyToken);
@@ -732,6 +739,33 @@ function getMusicSheet() {
   }
 
   return sheet;
+}
+
+/**
+ * Initializes required sheets and inserts sample music rows when empty.
+ * You can run this from GAS editor or by LINE command "シート初期化".
+ *
+ * @returns {string}
+ */
+function setupRequiredSheets() {
+  const mainSheet = getSheet();
+  const musicSheet = getMusicSheet();
+
+  const rowCount = Math.max(musicSheet.getLastRow() - 1, 0);
+  if (rowCount === 0) {
+    musicSheet.getRange(2, 1, 3, 3).setValues([
+      ['healing', 'やさしい', 'https://example.com/music/healing-01.mp3'],
+      ['ambient', '静か', 'https://example.com/music/ambient-01.mp3'],
+      ['piano', 'あたたかい', 'https://example.com/music/piano-01.mp3']
+    ]);
+  }
+
+  return (
+    '✅ シート初期化が完了しました。\n' +
+    `・${CONFIG.SHEET_NAME}: OK（行数 ${mainSheet.getLastRow()}）\n` +
+    `・音楽リスト: OK（データ行 ${Math.max(musicSheet.getLastRow() - 1, 0)}）\n\n` +
+    '※ 音楽URLは example.com のダミーです。実URLへ置き換えてください。'
+  );
 }
 
 /**
