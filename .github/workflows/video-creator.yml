@@ -160,9 +160,9 @@ jobs:
           fi
 
           ffmpeg -y \
-            -loop 1 -framerate 30 -t 8 -i img1.jpg \
+            -loop 1 -t 8 -i img1.jpg \
             -stream_loop -1 -t 8 -i "$GLITTER" \
-            -filter_complex "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[bg];[1:v]scale=1080:1920[gl];[bg][gl]overlay=0:0:shortest=1,format=yuv420p[v]" \
+            -filter_complex "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[bg];[1:v]format=rgba,scale=1080:1920[gl];[bg][gl]overlay=0:0:shortest=1,format=yuv420p[v]" \
             -map "[v]" \
             -r 30 -c:v libx264 -preset fast -crf 22 -pix_fmt yuv420p -an \
             clip1_base.mp4
@@ -177,7 +177,7 @@ jobs:
               clip2.mp4
 
             ffmpeg -y -i clip1.mp4 -i clip2.mp4 \
-              -filter_complex "[0:v]fps=30,trim=duration=7.5,setpts=PTS-STARTPTS[v0];[1:v]fps=30,trim=duration=7.5,setpts=PTS-STARTPTS[v1];[v0][v1]concat=n=2:v=1:a=0,format=yuv420p[v]" \
+              -filter_complex "[0:v]fps=30,trim=duration=8,settb=AVTB,setpts=PTS-STARTPTS[v0];[1:v]fps=30,trim=duration=8,settb=AVTB,setpts=PTS-STARTPTS[v1];[v0][v1]xfade=transition=dissolve:duration=1:offset=7,format=yuv420p[v]" \
               -map "[v]" \
               -t 15 \
               -r 30 -c:v libx264 -preset fast -crf 22 -pix_fmt yuv420p \
@@ -322,6 +322,12 @@ jobs:
           VIDEO_TEXT_1: ${{ github.event.client_payload.video_text_1 }}
           VIDEO_TEXT_2: ${{ github.event.client_payload.video_text_2 }}
         run: |
+          sanitize_url() {
+            python3 -c "import sys; value=sys.argv[1] if len(sys.argv)>1 else ''; value=''.join(ch for ch in value if ord(ch)>=32 and ord(ch)!=127); value=value.replace('\u3000',' ').strip(); print(value, end='')" "$1"
+          }
+
+          MAKE_WEBHOOK_URL="$(sanitize_url "$MAKE_WEBHOOK_URL")"
+
           if [ -z "$MAKE_WEBHOOK_URL" ]; then
             echo "ERROR: MAKE_WEBHOOK_URL is missing"
             exit 0
@@ -378,12 +384,22 @@ jobs:
             }')
 
           echo "Sending payload to Make..."
+          printf '%s' "$PAYLOAD" > /tmp/make_payload.json
+          set +e
           RESPONSE=$(curl -s -o /tmp/make_resp.txt -w "%{http_code}" \
             -X POST "$MAKE_WEBHOOK_URL" \
             -H "Content-Type: application/json" \
-            -d "$PAYLOAD" \
+            --data-binary @/tmp/make_payload.json \
             --max-time 120 \
             --retry 2 --retry-delay 2)
+          CURL_EXIT=$?
+          set -e
+
+          if [ "$CURL_EXIT" -ne 0 ]; then
+            echo "WARNING: Make webhook curl failed with exit $CURL_EXIT (continue)."
+            echo "MAKE_WEBHOOK_URL=$MAKE_WEBHOOK_URL"
+            exit 0
+          fi
 
           echo "Make webhook HTTP status: $RESPONSE"
           echo "Make webhook response body:"
