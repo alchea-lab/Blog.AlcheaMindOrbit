@@ -52,6 +52,8 @@ jobs:
 
           echo "Downloading IMG1..."
           curl -fL --retry 3 --retry-delay 2 --max-time 60 "$IMG1" -o img1.jpg
+          file img1.jpg || true
+          ffprobe -v error -show_entries stream=codec_name,pix_fmt,width,height -of default=noprint_wrappers=1 img1.jpg || true
 
           if [ -n "$SECOND_VIDEO_URL" ]; then
             echo "Downloading SECOND_VIDEO_URL..."
@@ -162,6 +164,8 @@ jobs:
           ffmpeg -y -i img1.jpg \
             -vf "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1,format=yuv420p" \
             -frames:v 1 img1_norm.jpg
+          file img1_norm.jpg || true
+          ffprobe -v error -show_entries stream=codec_name,pix_fmt,width,height -of default=noprint_wrappers=1 img1_norm.jpg || true
 
           ffmpeg -y \
             -loop 1 -t 8 -i img1_norm.jpg \
@@ -171,6 +175,7 @@ jobs:
             -t 8 \
             -r 30 -c:v libx264 -preset fast -crf 22 -pix_fmt yuv420p -an \
             clip1_base.mp4
+          ffprobe -v error -show_entries stream=codec_name,pix_fmt,width,height -of default=noprint_wrappers=1 clip1_base.mp4 || true
 
           add_text clip1_base.mp4 clip1.mp4 caption1.txt
           echo "clip1 ready"
