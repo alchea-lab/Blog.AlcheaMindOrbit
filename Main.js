@@ -1039,34 +1039,126 @@ function generateCaptionThreads(blog) {
 }
 
 /**
+ * Generates a YouTube Shorts title.
+ * @param {{ title: string, body: string }} blog
+ * @returns {string}
+ */
+function generateTitleYouTube(blog) {
+  const prompt = usesFixedSecondVideoPipeline_()
+    ? [
+        '# Role',
+        'あなたは YouTube Shorts 用のタイトルライターです。',
+        '',
+        '# Task',
+        '次の記事情報から、YouTube用タイトルを1本作成してください。',
+        '',
+        '# Rules',
+        '- 必ず日英併記にする',
+        '- 先頭に日本語、その後に半角スラッシュと半角スペースで英語要約を続ける',
+        '- 日本語は18〜34文字程度で、論点を鋭く切り出す',
+        '- 英語は4〜10語で、日本語の要旨を短く言い換える',
+        '- 柔らかい慰め調を避ける',
+        '- プレーンテキストのみ',
+        '- 90文字以内',
+        '- ハッシュタグ禁止',
+        '- タイトル本文のみ出力',
+        '',
+        '# Input',
+        `記事タイトル: ${blog.title}`,
+        `本文: ${blog.body.substring(0, 2500)}`
+      ].join('\n')
+    : [
+        '# Role',
+        'あなたは YouTube Shorts 用のタイトルライターです。',
+        '',
+        '# Task',
+        '次の記事情報から、YouTube用タイトルを1本作成してください。',
+        '',
+        '# Rules',
+        '- 40〜90文字',
+        '- プレーンテキストのみ',
+        '- ハッシュタグ禁止',
+        '- タイトル本文のみ出力',
+        '',
+        '# Input',
+        `記事タイトル: ${blog.title}`,
+        `本文: ${blog.body.substring(0, 2500)}`
+      ].join('\n');
+
+  return _normalizeYouTubeTitle(callGemini(prompt), blog.title);
+}
+
+/**
  * Generates a YouTube Shorts description.
  * @param {{ title: string, body: string }} blog
  * @param {string} hashtags
  * @returns {string}
  */
 function generateCaptionYouTube(blog, hashtags) {
-  const prompt = [
-    '# Role',
-    'あなたは YouTube Shorts 用の説明文ライターです。',
-    '',
-    '# Task',
-    '次の記事情報から、YouTube用の説明文を1本作成してください。',
-    '',
-    '# Rules',
-    '- 出力はプレーンテキストのみ（Markdown記号・HTMLタグ禁止）',
-    '- 先頭は強い導入1文、その後に要点を2〜4文で簡潔にまとめる',
-    '- 最後に「詳しくは元記事をご覧ください。」で締める',
-    '- 全体で80〜180文字（Shorts向けに簡潔に）',
-    `- 末尾に次のハッシュタグをそのまま追加: ${hashtags}`,
-    '- JSONは不要。説明文本文のみ出力',
-    '',
-    '# Input',
-    `記事タイトル: ${blog.title}`,
-    `本文: ${blog.body.substring(0, 3000)}`
-  ].join('\n');
+  const prompt = usesFixedSecondVideoPipeline_()
+    ? [
+        '# Role',
+        'あなたは YouTube Shorts 用の説明文ライターです。',
+        '',
+        '# Task',
+        '次の記事情報から、YouTube用の説明文を1本作成してください。',
+        '',
+        '# Rules',
+        '- 出力はプレーンテキストのみ（Markdown記号・HTMLタグ禁止）',
+        '- 必ず日英併記にする',
+        '- 構成は「日本語2〜4文」+ 改行 + 「英語1〜2文」',
+        '- 日本語は論点を絞って短く書く',
+        '- 英語は日本語パートの要旨を短く言い換える',
+        '- 柔らかい慰め調を避け、静かな断定と解析を使う',
+        '- 最後に「詳しくは元記事をご覧ください。」を入れる',
+        '- 全体で120〜240文字',
+        `- 末尾に次のハッシュタグをそのまま追加: ${hashtags}`,
+        '- JSONは不要。説明文本文のみ出力',
+        '',
+        '# Input',
+        `記事タイトル: ${blog.title}`,
+        `本文: ${blog.body.substring(0, 3000)}`
+      ].join('\n')
+    : [
+        '# Role',
+        'あなたは YouTube Shorts 用の説明文ライターです。',
+        '',
+        '# Task',
+        '次の記事情報から、YouTube用の説明文を1本作成してください。',
+        '',
+        '# Rules',
+        '- 出力はプレーンテキストのみ（Markdown記号・HTMLタグ禁止）',
+        '- 先頭は強い導入1文、その後に要点を2〜4文で簡潔にまとめる',
+        '- 最後に「詳しくは元記事をご覧ください。」で締める',
+        '- 全体で80〜180文字（Shorts向けに簡潔に）',
+        `- 末尾に次のハッシュタグをそのまま追加: ${hashtags}`,
+        '- JSONは不要。説明文本文のみ出力',
+        '',
+        '# Input',
+        `記事タイトル: ${blog.title}`,
+        `本文: ${blog.body.substring(0, 3000)}`
+      ].join('\n');
 
   const raw = callGemini(prompt);
   return _normalizeYouTubeDescription(raw, hashtags);
+}
+
+function _normalizeYouTubeTitle(text, fallbackTitle) {
+  let cleaned = String(text || fallbackTitle || '')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/[#*_`~>\[\]\(\)\|]/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+
+  if (usesFixedSecondVideoPipeline_()) {
+    cleaned = cleaned.replace(/\s*\/\s*/g, ' / ').trim();
+    if (cleaned.indexOf(' / ') === -1) {
+      cleaned = `${String(fallbackTitle || '').trim()} / English summary`;
+    }
+  }
+
+  return cleaned.substring(0, 90).trim();
 }
 
 /**
@@ -1092,6 +1184,10 @@ function _normalizeYouTubeDescription(text, hashtagsText) {
     .replace(/\s{2,}/g, ' ')
     .trim();
 
+  if (usesFixedSecondVideoPipeline_()) {
+    cleaned = cleaned.replace(/\n{3,}/g, '\n\n').trim();
+  }
+
   // If model forgot a clear ending, add one for channel consistency.
   if (!/詳しくは元記事をご覧ください。$/.test(cleaned)) {
     cleaned = `${cleaned}\n\n詳しくは元記事をご覧ください。`.trim();
@@ -1105,7 +1201,7 @@ function _normalizeYouTubeDescription(text, hashtagsText) {
   }
 
   // Keep Shorts description concise while preserving tags.
-  const MAX_TEXT_WITHOUT_TAGS = 180;
+  const MAX_TEXT_WITHOUT_TAGS = usesFixedSecondVideoPipeline_() ? 240 : 180;
   const suffix = tags ? `\n\n${tags}` : '';
   const allowedBodyLen = Math.max(80, MAX_TEXT_WITHOUT_TAGS - suffix.length);
 
@@ -1839,6 +1935,7 @@ function phase1_FromLine() {
     console.log('[phase1_FromLine] secondVideoUrl:', JSON.stringify(secondVideoUrl));
 
     // 必要なら保持
+    const titleYouTube = generateTitleYouTube(analyzed);
     const captionYouTube = generateCaptionYouTube(analyzed, hashtags);
     const youtubeTags = generateYoutubeTags(analyzed);
 
@@ -1874,6 +1971,7 @@ function phase1_FromLine() {
       system_id: (CONFIG.MAKE_SYSTEM_ID || 'alchea_mind_orbit'),
       caption_threads: captionThreads,
       caption_youtube: captionYouTube,
+      title_youtube: titleYouTube,
       tags_youtube: youtubeTags,
       title: analyzed.title,
       body: analyzed.body,
