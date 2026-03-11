@@ -177,7 +177,7 @@ jobs:
               clip2.mp4
 
             ffmpeg -y -i clip1.mp4 -i clip2.mp4 \
-              -filter_complex "[0:v]fps=30,settb=AVTB[v0];[1:v]fps=30,settb=AVTB[v1];[v0][v1]xfade=transition=dissolve:duration=1:offset=7,format=yuv420p[v]" \
+              -filter_complex "[0:v]fps=30,trim=duration=7.5,setpts=PTS-STARTPTS[v0];[1:v]fps=30,trim=duration=7.5,setpts=PTS-STARTPTS[v1];[v0][v1]concat=n=2:v=1:a=0,format=yuv420p[v]" \
               -map "[v]" \
               -t 15 \
               -r 30 -c:v libx264 -preset fast -crf 22 -pix_fmt yuv420p \
