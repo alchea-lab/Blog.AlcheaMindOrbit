@@ -254,17 +254,32 @@ function handleVideoCallback(body) {
 
     console.log('[handleVideoCallback] video_url:', videoUrl, 'userId:', userId);
 
-    if (userId && videoUrl) {
+    let driveVideoUrl = videoUrl;
+    let sheetRowUrl = '';
+
+    if (videoUrl) {
+      const latestRow = _getLatestSheetRowInfo_();
+      const title = latestRow && latestRow.title ? latestRow.title : 'generated_video';
+
+      driveVideoUrl = saveVideoToDrive(videoUrl, title);
+      const updatedRow = _updateSheetVideoUrl(driveVideoUrl);
+      sheetRowUrl = updatedRow ? updatedRow.sheetRowUrl : '';
+    }
+
+    if (userId && sheetRowUrl) {
       pushToLine(
         userId,
         '🎬 GitHub Actions 動画完成！🌸\n\n' +
-        '🔗 動画 URL:\n' + videoUrl + '\n\n' +
+        '🔗 スプレッド記録:\n' + sheetRowUrl + '\n\n' +
         '✅ Make が自動で Instagram / YouTube に投稿します🌙'
       );
-    }
-
-    if (videoUrl) {
-      _updateSheetVideoUrl(videoUrl);
+    } else if (userId && driveVideoUrl) {
+      pushToLine(
+        userId,
+        '🎬 GitHub Actions 動画完成！🌸\n\n' +
+        '🔗 Drive 動画 URL:\n' + driveVideoUrl + '\n\n' +
+        '✅ Make が自動で Instagram / YouTube に投稿します🌙'
+      );
     }
 
   } catch (err) {
@@ -277,11 +292,11 @@ function handleVideoCallback(body) {
 /**
  * スプレッドシートの最新行の動画 URL カラムを更新する。
  * @param {string} videoUrl
+ * @returns {{row:number, sheetRowUrl:string}|null}
  */
 function _updateSheetVideoUrl(videoUrl) {
   try {
-    const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
-    const sheet = ss.getSheetByName(CONFIG.SHEET_NAME);
+    const sheet = getSheet();
     if (!sheet) return;
 
     const lastRow = sheet.getLastRow();
@@ -293,9 +308,38 @@ function _updateSheetVideoUrl(videoUrl) {
     sheet.getRange(lastRow, 9).setValue(videoUrl);
 
     console.log(`[_updateSheetVideoUrl] Row ${lastRow} の動画 URL を更新しました: ${videoUrl}`);
+    return {
+      row: lastRow,
+      sheetRowUrl: _buildSheetRowUrl_(sheet, lastRow),
+    };
   } catch (err) {
     console.error('[_updateSheetVideoUrl] Error: ' + err.message);
   }
+  return null;
+}
+
+function _getLatestSheetRowInfo_() {
+  const sheet = getSheet();
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return null;
+
+  return {
+    row: lastRow,
+    title: String(sheet.getRange(lastRow, 3).getValue() || '').trim(),
+  };
+}
+
+function _buildSheetRowUrl_(sheet, row) {
+  return (
+    'https://docs.google.com/spreadsheets/d/' +
+    CONFIG.SPREADSHEET_ID +
+    '/edit#gid=' +
+    sheet.getSheetId() +
+    '&range=G' +
+    row +
+    ':I' +
+    row
+  );
 }
 
 /**
@@ -1746,7 +1790,7 @@ function saveVideoToDrive(videoUrl, title) {
         } else {
           const fileName = `${title}_${Date.now()}.mp4`;
           blob.setName(fileName);
-          const folder = DriveApp.getFolderById(CONFIG.DRIVE_VIDEO_FOLDER_ID);
+          const folder = _getOrCreateVideoFolder_();
           const file = folder.createFile(blob);
           file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
 
@@ -1780,6 +1824,28 @@ function saveVideoToDrive(videoUrl, title) {
     `最終Content-Type: ${lastContentType}\n` +
     `レスポンス詳細: ${lastSnippet}`
   );
+}
+
+function _getOrCreateVideoFolder_() {
+  const props = PropertiesService.getScriptProperties();
+  const configuredId = String(CONFIG.DRIVE_VIDEO_FOLDER_ID || props.getProperty('DRIVE_VIDEO_FOLDER_ID') || '').trim();
+
+  if (configuredId) {
+    try {
+      return DriveApp.getFolderById(configuredId);
+    } catch (err) {
+      console.warn(`[_getOrCreateVideoFolder_] 指定フォルダIDが無効です: ${configuredId}`);
+    }
+  }
+
+  const parentFolder = DriveApp.getFolderById(CONFIG.DRIVE_FOLDER_ID);
+  const folderName = '生成動画_AlcheaMindOrbit';
+  const matches = parentFolder.getFoldersByName(folderName);
+  const folder = matches.hasNext() ? matches.next() : parentFolder.createFolder(folderName);
+
+  props.setProperty('DRIVE_VIDEO_FOLDER_ID', folder.getId());
+  console.log(`[_getOrCreateVideoFolder_] Drive動画フォルダを使用: ${folder.getId()}`);
+  return folder;
 }
 
 
