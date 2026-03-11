@@ -92,7 +92,7 @@ function replyToLine(replyToken, message) {
 function replyToLineMessages(replyToken, messages) {
   if (!replyToken || !messages || !messages.length) return;
 
-  UrlFetchApp.fetch('https://api.line.me/v2/bot/message/reply', {
+  const res = UrlFetchApp.fetch('https://api.line.me/v2/bot/message/reply', {
     method: 'POST',
     muteHttpExceptions: true,
     headers: {
@@ -104,6 +104,12 @@ function replyToLineMessages(replyToken, messages) {
       messages: messages,
     }),
   });
+  const code = res.getResponseCode();
+  if (code < 200 || code >= 300) {
+    console.error('[replyToLineMessages] LINE reply failed:', code, res.getContentText());
+  } else {
+    console.log('[replyToLineMessages] LINE reply ok:', code);
+  }
 }
 
 /**
@@ -116,7 +122,7 @@ function replyToLineMessages(replyToken, messages) {
 function pushToLine(userId, message) {
   if (!userId || !message || String(message).trim() === '') return;
 
-  UrlFetchApp.fetch('https://api.line.me/v2/bot/message/push', {
+  const res = UrlFetchApp.fetch('https://api.line.me/v2/bot/message/push', {
     method: 'POST',
     muteHttpExceptions: true,
     headers: {
@@ -128,6 +134,12 @@ function pushToLine(userId, message) {
       messages: [{ type: 'text', text: String(message) }],
     }),
   });
+  const code = res.getResponseCode();
+  if (code < 200 || code >= 300) {
+    console.error('[pushToLine] LINE push failed:', code, res.getContentText());
+  } else {
+    console.log('[pushToLine] LINE push ok:', code);
+  }
 }
 
 /**
@@ -198,6 +210,7 @@ function doPost(e) {
 
   try {
     const body = JSON.parse(e.postData.contents);
+    console.log('[doPost] payload keys:', Object.keys(body || {}));
 
     // ── GitHub Actions callback ──────────────────────────────
     if (body.action === 'video_complete') {
@@ -207,6 +220,7 @@ function doPost(e) {
     // ── LINE Webhook ────────────────────────────────────────
     const event = body.events && body.events[0];
     if (!event) return ContentService.createTextOutput('ok');
+    console.log('[doPost] event type:', event.type, 'message type:', event.message ? event.message.type : '');
 
     userId = event.source.userId;
     const replyToken = event.replyToken;
@@ -849,7 +863,7 @@ function usesFixedSecondVideoPipeline_() {
 
 function resolveFixedSecondVideoUrl_() {
   if (!usesFixedSecondVideoPipeline_()) return '';
-  const url = String(CONFIG.FIXED_SECOND_VIDEO_URL || '').trim();
+  const url = _sanitizeUrl_(CONFIG.FIXED_SECOND_VIDEO_URL || '');
   if (!url) {
     throw new Error(
       '固定2本目動画URLが未設定です。Config.js の FIXED_SECOND_VIDEO_URL を設定してください。'
@@ -860,10 +874,10 @@ function resolveFixedSecondVideoUrl_() {
 
 function resolveVideoMusicUrl_(theme) {
   if (usesFixedSecondVideoPipeline_()) {
-    const url = String(CONFIG.FIXED_MUSIC_URL || '').trim();
+    const url = _sanitizeUrl_(CONFIG.FIXED_MUSIC_URL || '');
     if (url) return url;
   }
-  return selectMusicFromSheet(theme);
+  return _sanitizeUrl_(selectMusicFromSheet(theme));
 }
 
 /**
@@ -1151,7 +1165,7 @@ function generateVideoAndCaptions(blog, textMode) {
   if (usesFixedSecondVideoPipeline_()) {
     const prompt = [
       '# Role',
-      'あなたは、親子心理・脳科学テーマのショート動画向けコピーライターです。',
+      'あなたは、脳科学・占星術・統治論を横断するメディアのショート動画向けコピーライターです。',
       '',
       '# Task',
       '1枚目の静止画に重ねるダイジェスト文と、Instagram/Threads用キャプションを作成してください。',
@@ -1161,10 +1175,16 @@ function generateVideoAndCaptions(blog, textMode) {
       '- video_text_1 はブログ本文のダイジェストとして作る',
       '- video_text_1 は 34〜60文字、最大60文字',
       '- 1文または2文まで。必要なら \\n で自然に改行',
-      '- 説明しすぎず、続きを見たくなる余白を残す',
+      '- 抽象的にぼかさず、論点を鋭く切り出す',
       '- video_text_2 は必ず空文字 ""',
-      '- caption_insta は 260〜420文字程度',
-      '- caption_threads は 320〜500文字程度',
+      '- caption_insta は 120〜220文字程度で、長くしすぎない',
+      '- caption_insta は必ず日英併記にする',
+      '- caption_insta の構成は「日本語2〜4文」+ 改行 + 「英語1〜2文」',
+      '- caption_insta のトーンは柔らかすぎず、静かな断定と解析を中心にする',
+      '- caption_insta では、安易な共感・慰め・癒やし調の語り口を避ける',
+      '- caption_insta の英語は日本語パートの要旨を短く言い換える',
+      '- caption_threads は 220〜360文字程度',
+      '- caption_threads も柔らかすぎず、論点を整理する文体にする',
       '- Markdown記号、HTMLタグ、絵文字は使わない',
       '- JSONのみ出力',
       '',
@@ -1197,8 +1217,8 @@ function generateVideoAndCaptions(blog, textMode) {
       return {
         video_text_1: String(blog.excerpt || blog.title || '').slice(0, 60),
         video_text_2: '',
-        caption_insta: '本文の要点を静かに掘り下げる短い解説です。詳細はプロフィールのリンクから全体像をご覧いただけるかもしれませんね。',
-        caption_threads: '本文の要点を一歩引いて整理すると、見えてくる仕組みがあるのかもしれませんね。'
+        caption_insta: '環境に振り回されるのではなく、作用の構造を見抜くことから主権は戻ります。\n不安や焦燥は、脳が負荷を検知した結果として起きる反応です。\n\nSovereignty begins when you read the structure instead of obeying the pressure.\nAnxiety can be a detectable response, not a personal flaw.',
+        caption_threads: '不安や焦燥を性格の問題として処理すると、構造は見えません。外部環境の負荷に対して神経系がどのように反応しているかを読むことで、はじめて対処の精度が上がります。'
       };
     }
   }
@@ -1306,13 +1326,18 @@ function generateVideoAndCaptions(blog, textMode) {
 function _normalizeCaptionsByChannel(captionInsta, captionThreads, hashtagsText) {
   const requiredInstaTag = '#アイピーエム';
   const cleanThreads = String(captionThreads || '')
+    .replace(/<[^>]*>/g, ' ')
     .replace(/#[\w\u3040-\u30FF\u3400-\u9FFFー]+/g, '')
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 
   let cleanInsta = String(captionInsta || '')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/<[^>]*>/g, ' ')
     .replace(/#[\w\u3040-\u30FF\u3400-\u9FFFー]+/g, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
     .trim();
 
   const tagList = String(hashtagsText || '')
@@ -1351,28 +1376,53 @@ function _avoidDuplicateInstagramCaption(blog, currentCaption, hashtags, previou
   const prev = String(previousCaption || '').trim();
   if (!now || !prev || now !== prev) return now;
 
-  const prompt = [
-    '# Role',
-    'あなたはInstagramリール投稿のコピーライターです。',
-    '',
-    '# Task',
-    '前回文と重複しない、新しいInstagramキャプションを1本作成してください。',
-    '',
-    '# Rules',
-    '- 260〜420文字',
-    '- プレーンテキストのみ（Markdown/HTML禁止）',
-    '- 前回文と語彙・導入・締めを必ず変更する',
-    '- 語尾は「〜かもしれませんね」で終える',
-    `- 末尾のハッシュタグ候補: ${hashtags}`,
-    '- 出力は本文のみ',
-    '',
-    '# Previous Caption (do not reuse)',
-    prev,
-    '',
-    '# Input',
-    `記事タイトル: ${blog.title}`,
-    `本文: ${blog.body.substring(0, 3000)}`
-  ].join('\n');
+  const prompt = usesFixedSecondVideoPipeline_()
+    ? [
+        '# Role',
+        'あなたはInstagramリール投稿のコピーライターです。',
+        '',
+        '# Task',
+        '前回文と重複しない、新しいInstagramキャプションを1本作成してください。',
+        '',
+        '# Rules',
+        '- 120〜220文字',
+        '- プレーンテキストのみ（Markdown/HTML禁止）',
+        '- 必ず日英併記にする',
+        '- 構成は「日本語2〜4文」+ 改行 + 「英語1〜2文」',
+        '- 前回文と語彙・導入・締めを必ず変更する',
+        '- 柔らかい慰め調を避け、静かな断定と解析を使う',
+        `- 末尾のハッシュタグ候補: ${hashtags}`,
+        '- 出力は本文のみ',
+        '',
+        '# Previous Caption (do not reuse)',
+        prev,
+        '',
+        '# Input',
+        `記事タイトル: ${blog.title}`,
+        `本文: ${blog.body.substring(0, 3000)}`
+      ].join('\n')
+    : [
+        '# Role',
+        'あなたはInstagramリール投稿のコピーライターです。',
+        '',
+        '# Task',
+        '前回文と重複しない、新しいInstagramキャプションを1本作成してください。',
+        '',
+        '# Rules',
+        '- 260〜420文字',
+        '- プレーンテキストのみ（Markdown/HTML禁止）',
+        '- 前回文と語彙・導入・締めを必ず変更する',
+        '- 語尾は「〜かもしれませんね」で終える',
+        `- 末尾のハッシュタグ候補: ${hashtags}`,
+        '- 出力は本文のみ',
+        '',
+        '# Previous Caption (do not reuse)',
+        prev,
+        '',
+        '# Input',
+        `記事タイトル: ${blog.title}`,
+        `本文: ${blog.body.substring(0, 3000)}`
+      ].join('\n');
 
   const retry = callGemini(prompt);
   return String(retry || '').trim() || now;
@@ -1672,6 +1722,13 @@ function _normalizeVideoText(value) {
     .trim();
 }
 
+function _sanitizeUrl_(value) {
+  return String(value == null ? '' : value)
+    .replace(/[\u0000-\u001F\u007F]/g, '')
+    .replace(/\u3000/g, ' ')
+    .trim();
+}
+
 /**
  * Make.com webhook - broadcasts all generated assets.
  * @param {Object} params
@@ -1779,6 +1836,7 @@ function phase1_FromLine() {
     console.log('[phase1_FromLine] raw video_text_2:', JSON.stringify(rawVideoText2));
     console.log('[phase1_FromLine] normalized video_text_1:', JSON.stringify(videoText1));
     console.log('[phase1_FromLine] normalized video_text_2:', JSON.stringify(videoText2));
+    console.log('[phase1_FromLine] secondVideoUrl:', JSON.stringify(secondVideoUrl));
 
     // 必要なら保持
     const captionYouTube = generateCaptionYouTube(analyzed, hashtags);
