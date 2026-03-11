@@ -280,6 +280,21 @@ jobs:
           echo "VIDEO_URL=$VIDEO_URL" >> $GITHUB_ENV
           echo "Video uploaded successfully."
 
+      - name: Upload debug artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: second-system-debug-${{ github.run_id }}
+          if-no-files-found: ignore
+          retention-days: 3
+          path: |
+            img1.jpg
+            img1_norm.jpg
+            clip1_base.mp4
+            clip1.mp4
+            slideshow.mp4
+            output.mp4
+
       - name: Notify GAS callback (LINE + Spreadsheet)
         continue-on-error: true
         env:
