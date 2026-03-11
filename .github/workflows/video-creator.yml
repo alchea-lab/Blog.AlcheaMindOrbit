@@ -399,15 +399,19 @@ jobs:
               video_text_2: $video_text_2
             }')
 
+          MAKE_WEBHOOK_URL="$(printf '%s' "$MAKE_WEBHOOK_URL" | tr -d '\r' | sed 's/[[:space:]]*$//')"
           echo "Sending payload to Make..."
           printf '%s' "$PAYLOAD" > /tmp/make_payload.json
           CURL_EXIT=0
+          set +e
           curl -s -o /tmp/make_resp.txt -w "%{http_code}" \
             -X POST "$MAKE_WEBHOOK_URL" \
             -H "Content-Type: application/json" \
             --data-binary @/tmp/make_payload.json \
             --max-time 120 \
-            --retry 2 --retry-delay 2 > /tmp/make_status.txt || CURL_EXIT=$?
+            --retry 2 --retry-delay 2 > /tmp/make_status.txt
+          CURL_EXIT=$?
+          set -e
           RESPONSE="$(cat /tmp/make_status.txt 2>/dev/null || true)"
 
           if [ "$CURL_EXIT" -ne 0 ]; then
