@@ -161,9 +161,10 @@ jobs:
 
           ffmpeg -y \
             -loop 1 -t 8 -i img1.jpg \
-            -stream_loop -1 -t 8 -i "$GLITTER" \
-            -filter_complex "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[bg];[1:v]scale=1080:1920:flags=lanczos,format=argb[gl];[bg][gl]overlay=0:0:format=auto:shortest=1[tmp];[tmp]format=yuv420p[v]" \
+            -stream_loop -1 -i "$GLITTER" \
+            -filter_complex "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,format=yuv420p[bg];[1:v]format=yuva444p10le,scale=1080:1920:flags=lanczos,trim=duration=8,setpts=PTS-STARTPTS[gl];[bg][gl]overlay=0:0:format=auto:shortest=1,format=yuv420p[v]" \
             -map "[v]" \
+            -t 8 \
             -r 30 -c:v libx264 -preset fast -crf 22 -pix_fmt yuv420p -an \
             clip1_base.mp4
 
@@ -385,19 +386,19 @@ jobs:
 
           echo "Sending payload to Make..."
           printf '%s' "$PAYLOAD" > /tmp/make_payload.json
-          set +e
-          RESPONSE=$(curl -s -o /tmp/make_resp.txt -w "%{http_code}" \
+          CURL_EXIT=0
+          curl -s -o /tmp/make_resp.txt -w "%{http_code}" \
             -X POST "$MAKE_WEBHOOK_URL" \
             -H "Content-Type: application/json" \
             --data-binary @/tmp/make_payload.json \
             --max-time 120 \
-            --retry 2 --retry-delay 2)
-          CURL_EXIT=$?
-          set -e
+            --retry 2 --retry-delay 2 > /tmp/make_status.txt || CURL_EXIT=$?
+          RESPONSE="$(cat /tmp/make_status.txt 2>/dev/null || true)"
 
           if [ "$CURL_EXIT" -ne 0 ]; then
             echo "WARNING: Make webhook curl failed with exit $CURL_EXIT (continue)."
             echo "MAKE_WEBHOOK_URL=$MAKE_WEBHOOK_URL"
+            cat /tmp/make_resp.txt || true
             exit 0
           fi
 
