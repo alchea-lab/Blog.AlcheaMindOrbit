@@ -33,6 +33,24 @@ jobs:
           IMG2: ${{ github.event.client_payload.image_url2 }}
           SECOND_VIDEO_URL: ${{ github.event.client_payload.second_video_url }}
         run: |
+          sanitize_url() {
+            python3 - "$1" << 'PYEOF'
+import sys
+value = sys.argv[1] if len(sys.argv) > 1 else ''
+value = ''.join(ch for ch in value if ord(ch) >= 32 and ord(ch) != 127)
+value = value.replace('\u3000', ' ').strip()
+print(value, end='')
+PYEOF
+          }
+
+          IMG1="$(sanitize_url "$IMG1")"
+          IMG2="$(sanitize_url "$IMG2")"
+          SECOND_VIDEO_URL="$(sanitize_url "$SECOND_VIDEO_URL")"
+
+          echo "IMG1=$IMG1"
+          echo "IMG2=$IMG2"
+          echo "SECOND_VIDEO_URL=$SECOND_VIDEO_URL"
+
           if [ -z "$IMG1" ]; then
             echo "ERROR: image_url1 is missing"
             exit 1
@@ -60,6 +78,16 @@ jobs:
         env:
           MUSIC_URL: ${{ github.event.client_payload.music_url }}
         run: |
+          MUSIC_URL="$(python3 - "$MUSIC_URL" << 'PYEOF'
+import sys
+value = sys.argv[1] if len(sys.argv) > 1 else ''
+value = ''.join(ch for ch in value if ord(ch) >= 32 and ord(ch) != 127)
+value = value.replace('\u3000', ' ').strip()
+print(value, end='')
+PYEOF
+          )"
+          echo "MUSIC_URL=$MUSIC_URL"
+
           if [ -n "$MUSIC_URL" ]; then
             echo "Downloading BGM..."
             curl -fL --retry 3 --retry-delay 2 --max-time 60 "$MUSIC_URL" -o bgm.mp3
