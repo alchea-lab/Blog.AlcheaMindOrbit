@@ -1143,6 +1143,21 @@ function generateCaptionYouTube(blog, hashtags) {
   return _normalizeYouTubeDescription(raw, hashtags);
 }
 
+function _secondSystemFooterText_() {
+  return [
+    'Orbit & Circuit.',
+    '天体＆神経回路の共鳴',
+    '◆Graces Substack',
+    'https://graces8.substack.com',
+    '◆ Bijouxd Graces Official Site',
+    'https://bijouxd-graces.com/'
+  ].join('\n');
+}
+
+function _secondSystemInstagramHashtags_() {
+  return '#Alchea #MindOrbit #NeuroAlchemy #BijouxdGraces #ホロスコープ';
+}
+
 function _normalizeYouTubeTitle(text, fallbackTitle) {
   let cleaned = String(text || fallbackTitle || '')
     .replace(/```[\s\S]*?```/g, ' ')
@@ -1193,16 +1208,10 @@ function _normalizeYouTubeDescription(text, hashtagsText) {
     cleaned = `${cleaned}\n\n詳しくは元記事をご覧ください。`.trim();
   }
 
-  if (tags) {
-    cleaned = cleaned
-      .replace(/#[\w\u3040-\u30FF\u3400-\u9FFFー]+/g, '')
-      .trim();
-    cleaned = `${cleaned}\n\n${tags}`.trim();
-  }
-
   // Keep Shorts description concise while preserving tags.
   const MAX_TEXT_WITHOUT_TAGS = usesFixedSecondVideoPipeline_() ? 240 : 180;
-  const suffix = tags ? `\n\n${tags}` : '';
+  const footer = usesFixedSecondVideoPipeline_() ? `\n\n${_secondSystemFooterText_()}` : '';
+  const suffix = `${footer}${tags ? `\n\n${tags}` : ''}`;
   const allowedBodyLen = Math.max(80, MAX_TEXT_WITHOUT_TAGS - suffix.length);
 
   if (cleaned.length > allowedBodyLen) {
@@ -1213,11 +1222,16 @@ function _normalizeYouTubeDescription(text, hashtagsText) {
     cleaned = `${cleaned}\n要点を短く整理してお届けします。`.trim();
   }
 
+  cleaned = cleaned
+    .replace(/#[\w\u3040-\u30FF\u3400-\u9FFFー]+/g, '')
+    .trim();
+
+  if (usesFixedSecondVideoPipeline_()) {
+    cleaned = `${cleaned}\n\n${_secondSystemFooterText_()}`.trim();
+  }
+
   if (tags) {
-    cleaned = cleaned
-      .replace(/#[\w\u3040-\u30FF\u3400-\u9FFFー]+/g, '')
-      .trim();
-    cleaned = `${cleaned}${suffix}`.trim();
+    cleaned = `${cleaned}\n\n${tags}`.trim();
   }
 
   return cleaned;
@@ -1420,7 +1434,6 @@ function generateVideoAndCaptions(blog, textMode) {
  * @private
  */
 function _normalizeCaptionsByChannel(captionInsta, captionThreads, hashtagsText) {
-  const requiredInstaTag = '#アイピーエム';
   const cleanThreads = String(captionThreads || '')
     .replace(/<[^>]*>/g, ' ')
     .replace(/#[\w\u3040-\u30FF\u3400-\u9FFFー]+/g, '')
@@ -1436,6 +1449,18 @@ function _normalizeCaptionsByChannel(captionInsta, captionThreads, hashtagsText)
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 
+  if (usesFixedSecondVideoPipeline_()) {
+    cleanInsta = `${cleanInsta}\n\n${_secondSystemFooterText_()}\n\n${_secondSystemInstagramHashtags_()}`
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+
+    return {
+      captionInstagram: cleanInsta,
+      captionThreads: cleanThreads
+    };
+  }
+
+  const requiredInstaTag = '#アイピーエム';
   const tagList = String(hashtagsText || '')
     .split(/\s+/)
     .filter(function(t) { return /^#/.test(t); })
