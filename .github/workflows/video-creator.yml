@@ -34,13 +34,7 @@ jobs:
           SECOND_VIDEO_URL: ${{ github.event.client_payload.second_video_url }}
         run: |
           sanitize_url() {
-            python3 - "$1" << 'PYEOF'
-import sys
-value = sys.argv[1] if len(sys.argv) > 1 else ''
-value = ''.join(ch for ch in value if ord(ch) >= 32 and ord(ch) != 127)
-value = value.replace('\u3000', ' ').strip()
-print(value, end='')
-PYEOF
+            python3 -c "import sys; value=sys.argv[1] if len(sys.argv)>1 else ''; value=''.join(ch for ch in value if ord(ch)>=32 and ord(ch)!=127); value=value.replace('\u3000',' ').strip(); print(value, end='')" "$1"
           }
 
           IMG1="$(sanitize_url "$IMG1")"
@@ -78,14 +72,7 @@ PYEOF
         env:
           MUSIC_URL: ${{ github.event.client_payload.music_url }}
         run: |
-          MUSIC_URL="$(python3 - "$MUSIC_URL" << 'PYEOF'
-import sys
-value = sys.argv[1] if len(sys.argv) > 1 else ''
-value = ''.join(ch for ch in value if ord(ch) >= 32 and ord(ch) != 127)
-value = value.replace('\u3000', ' ').strip()
-print(value, end='')
-PYEOF
-          )"
+          MUSIC_URL="$(python3 -c "import sys; value=sys.argv[1] if len(sys.argv)>1 else ''; value=''.join(ch for ch in value if ord(ch)>=32 and ord(ch)!=127); value=value.replace('\u3000',' ').strip(); print(value, end='')" "$MUSIC_URL")"
           echo "MUSIC_URL=$MUSIC_URL"
 
           if [ -n "$MUSIC_URL" ]; then
